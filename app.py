@@ -118,33 +118,17 @@ if uploaded_file is not None:
 
         st.markdown("---")
 
-               # --- 7. CLICKABLE STRUCTURAL DATA VIEW ---
+        # --- 7. CLICKABLE STRUCTURAL DATA VIEW ---
         st.subheader("📋 Consolidated Failure Master Data Reference Table")
         st.caption("Click any discrepancy category to inspect the flagged records.")
 
-        # Build a DataFrame where the category column holds the navigation URL
         nav_df = df[["COUNT", "SEVERITY", "PERCENTAGE"]].copy()
         nav_df.insert(0, "DISCREPANCY_CATEGORY", df["DISCREPANCY_CATEGORY"].apply(
             lambda x: f"/Discrepancy_Details?type={x.replace(' ', '_')}"
         ))
 
-        # Dark-theme Styler
-        styled = nav_df.style.format({"PERCENTAGE": "{:.4f}"}).set_properties(**{
-            "color": "#E2E8F0",
-            "background-color": "rgba(30, 41, 59, 0.6)",
-        }).set_table_styles([
-            {"selector": "th", "props": [
-                ("color", "#E2E8F0"),
-                ("background-color", "rgba(30, 41, 59, 0.8)"),
-            ]},
-            {"selector": "td, th", "props": [
-                ("border-color", "#334155"),
-                ("padding", "10px 14px"),
-            ]},
-        ])
-
         st.dataframe(
-            styled,
+            nav_df,
             column_config={
                 "DISCREPANCY_CATEGORY": st.column_config.LinkColumn(
                     "DISCREPANCY_CATEGORY",
@@ -152,7 +136,7 @@ if uploaded_file is not None:
                 ),
                 "COUNT": st.column_config.NumberColumn("COUNT", format="%d"),
                 "SEVERITY": st.column_config.TextColumn("SEVERITY"),
-                "PERCENTAGE": st.column_config.NumberColumn("PERCENTAGE", format="%.4f"),
+                "PERCENTAGE": st.column_config.NumberColumn("PERCENTAGE", format="%.2f%%"),
             },
             hide_index=True,
             use_container_width=True,
