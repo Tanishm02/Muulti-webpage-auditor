@@ -40,9 +40,6 @@ if uploaded_file is not None:
         st.session_state["file_name"] = uploaded_file.name
 
         # --- 4. BACKEND AUDIT CRITERIA CALCULATION ENGINE ---
-        # All counts are now PER ROW (not per cell).
-        # • Same discrepancy type appearing in multiple columns of one row = 1 count.
-        # • Two different discrepancy types in one row = 1 count in each category.
         results = detect_discrepancies(raw_df)
         st.session_state["discrepancy_results"] = results
 
@@ -141,7 +138,8 @@ if uploaded_file is not None:
                     key=f"nav_btn_{row['DISCREPANCY_CATEGORY'].replace(' ', '_')}",
                     use_container_width=True
                 ):
-                    st.query_params["type"] = row["DISCREPANCY_CATEGORY"].replace(" ", "_")
+                    # FIXED: Use session state instead of query_params
+                    st.session_state["selected_discrepancy"] = row["DISCREPANCY_CATEGORY"]
                     st.switch_page("pages/Discrepancy_Details.py")
                     
             c2.write(f"{int(row['COUNT'])}")
