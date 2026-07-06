@@ -1,14 +1,28 @@
+"""
+Discrepancy Detail Page
+-----------------------
+Opened from the main dashboard via hyperlink.
+Reads query param  ?type=Category_Name  and session state to display
+the specific flagged records for that discrepancy category.
+
+For "Duplicate Records" this page performs near-duplicate (fuzzy)
+detection, groups results by descending similarity, and inserts
+visual row gaps between groups.
+"""
+
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import requests
-import json
-import difflib
-import os
+import numpy as np
+from audit_engine import find_near_duplicates
 
-# --- 1. SET PAGE AND APPLICATION LAYOUT CONFIGURATION ---
-st.set_page_config(page_title="SAP Master Data Governance Dashboard", layout="wide", initial_sidebar_state="collapsed")
+# ── Page config (must be first Streamlit call) ──
+st.set_page_config(
+    page_title="Discrepancy Details",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
+# ── Global dark styling (matches dashboard) ──
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -16,293 +30,300 @@ st.markdown("""
     header {visibility: hidden;}
     .block-container {padding-top: 2rem !important; padding-bottom: 2rem !important;}
     body { background-color: #0F172A !important; color: #e4e2e4 !important; font-family: 'Inter', sans-serif !important; }
-    .glass-card { background: rgba(30, 41, 59, 0.6); backdrop-filter: blur(12px); border: 1px solid #334155; transition: all 0.3s ease; }
-    
-    /* Custom styling for the HTML Data Table to match dark theme */
-    .custom-table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 14px; text-align: left; color: #E2E8F0; }
-    .custom-table th { background-color: rgba(30, 41, 59, 0.9); padding: 12px; border-bottom: 2px solid #334155; }
-    .custom-table td { padding: 10px 12px; border-bottom: 1px solid #1E293B; background: rgba(15, 23, 42, 0.4); }
-    .custom-table tr:hover td { background-color: rgba(51, 65, 85, 0.5); }
-    .custom-table a { color: #60A5FA; text-decoration: none; font-weight: 600; }
-    .custom-table a:hover { text-decoration: underline; color: #93C5FD; }
+    /* Hide this page from sidebar nav to keep navigation clean */
+    [data-testid="stSidebarNav"] [href*="Discrepancy_Details"] { display: none; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. ROUTING LOGIC & HELPER FUNCTIONS ---
-# Retrieve URL parameters to determine which view to render
-query_params = st.query_params
-current_page = query_params.get("page", "main")
 
-TEMP_DATA_FILE = "temp_master_data.pkl"
+# ═══════════════════════════════════════════════
+#  HELPER: styled dataframe matching dark theme
+# ═══════════════════════════════════════════════
 
-def find_fuzzy_duplicates(df, similarity_threshold=0.85):
-    """Finds near-duplicates and groups them with a blank row in between."""
-    # Convert all columns to string for comparison to catch near-matches across the row
-    row_strings = df.astype(str).apply(lambda x: ' | '.join(x), axis=1).tolist()
-    
-    grouped_duplicates = []
-    visited_indices = set()
-    
-    for i in range(len(row_strings)):
-        if i in visited_indices: 
-            continue
-        
-        current_group = [(i, 1.0)] # Tuple of (index, similarity_score)
-        
-        for j in range(i + 1, len(row_strings)):
-            if j in visited_indices: 
-                continue
-            
-            sim_score = difflib.SequenceMatcher(None, row_strings[i], row_strings[j]).ratio()
-            if sim_score >= similarity_threshold:
-                current_group.append((j, sim_score))
-                visited_indices.add(j)
-                
-        if len(current_group) > 1:
-            # Sort the group descending by similarity to the first item
-            current_group.sort(key=lambda x: x[1], reverse=True)
-            grouped_duplicates.append([idx for idx, score in current_group])
-            
-        visited_indices.add(i)
-        
-    output_rows = []
-    empty_row = {col: "" for col in df.columns}
-    
-    for group in grouped_duplicates:
-        for idx in group:
-            output_rows.append(df.iloc[idx].to_dict())
-        # Insert a 1-row gap between groups
-        output_rows.append(empty_row)
-        
-    return pd.DataFrame(output_rows)
+def _dark_style(df):
+    """Return a Styler with the dashboard's dark colour scheme."""
+    return (
+        df.style
+        .set_properties(**{
+            "color": "#E2E8F0",
+            "background-color": "#0F172A",
+            "border-color": "#1E293B",
+        })
+        .set_table_styles([
+            {"selector": "th", "props": [
+                "background-color: #1E293B",
+                "color: #94A3B8",
+                "font-weight: 600",
+            ]},
+            {"selector": "td", "props": [
+                "border-color: #1E293B",
+            ]},
+            {"selector": "tr:hover td", "props": [
+                "background-color: rgba(30,41,59,0.6)",
+            ]},
+        ])
+        .hide(axis="index")
+    )
 
-# --- 3. SUB-PAGES (ROOT CAUSE DRILL-DOWNS) ---
-if current_page != "main":
-    if not os.path.exists(TEMP_DATA_FILE):
-        st.error("Data session expired or not found. Please return to the main dashboard and upload the file again.")
-        st.stop()
-        
-    raw_df = pd.read_pickle(TEMP_DATA_FILE)
-    st.title(f"🔍 Drill-Down: {current_page.replace('_', ' ')}")
-    st.markdown(f"Investigating flagged records for **{current_page.replace('_', ' ')}**.")
-    
-    if current_page == "Duplicate_Records":
-        st.info("Running fuzzy matching algorithms to detect near-duplicates. Grouped by similarity.")
-        with st.spinner("Analyzing similarities..."):
-            dup_df = find_fuzzy_duplicates(raw_df, similarity_threshold=0.80)
-            if not dup_df.empty:
-                st.dataframe(dup_df, use_container_width=True)
-            else:
-                st.success("No near-duplicates found.")
-                
-    elif current_page == "Incomplete_Records":
-        mask = raw_df.isnull().any(axis=1)
-        st.dataframe(raw_df[mask], use_container_width=True)
-        
-    elif current_page == "Incorrect_Classification":
-        if "Credit_Limit" in raw_df.columns:
-            mask = raw_df["Credit_Limit"] < 0
-            st.dataframe(raw_df[mask], use_container_width=True)
+
+def _highlight_if(val, condition_fn):
+    """Cell-level highlighter — red tint when condition is True."""
+    if condition_fn(val):
+        return "background-color: rgba(239,85,59,0.15); color: #FCA5A5; font-weight: 600;"
+    return "color: #E2E8F0; background-color: #0F172A;"
+
+
+# ═══════════════════════════════════════════════
+#  CATEGORY-SPECIFIC RENDERERS
+# ═══════════════════════════════════════════════
+
+def render_duplicates(df, indices, count):
+    """
+    Near-duplicate fuzzy detection.
+    Groups are sorted by descending average similarity with visual gaps.
+    """
+    if len(df) < 2:
+        st.info("Not enough records to perform near-duplicate analysis.")
+        return
+
+    st.subheader("Near-Duplicate Detection")
+    st.caption(
+        "Records are grouped by pairwise string similarity across ALL columns. "
+        "Adjust the threshold to broaden or narrow the match scope."
+    )
+
+    # Large-dataset warning
+    if len(df) > 500:
+        st.warning(
+            "⚠️ Your dataset has **{:,}** rows. Pairwise analysis is O(n²) and may "
+            "take a while. If it's too slow, consider uploading a filtered subset.".format(len(df))
+        )
+
+    col_t, col_s = st.columns([1, 3])
+    with col_t:
+        threshold = st.slider(
+            "Similarity Threshold",
+            min_value=0.50,
+            max_value=0.99,
+            value=0.70,
+            step=0.01,
+            format="%.2f",
+        )
+    with col_s:
+        st.markdown(
+            f"<div style='padding-top:28px;color:#94A3B8;'>"
+            f"Groups with average similarity ≥ "
+            f"<strong style='color:#60A5FA;'>{threshold:.0%}</strong> "
+            f"will be displayed.</div>",
+            unsafe_allow_html=True,
+        )
+
+    with st.spinner("Computing pairwise similarity matrix…"):
+        groups = find_near_duplicates(df, threshold=threshold)
+
+    if not groups:
+        st.warning(
+            f"No near-duplicate groups found at **{threshold:.0%}** threshold. "
+            "Try lowering the slider."
+        )
+        return
+
+    # Summary bar
+    total_involved = sum(len(m) for _, m in groups)
+    st.success(
+        f"Found **{len(groups)}** near-duplicate group(s) involving "
+        f"**{total_involved}** unique records "
+        f"(dashboard count: **{count}** exact duplicates)."
+    )
+
+    # ── Render each group with a header card + table + gap ──
+    for gi, (avg_sim, members) in enumerate(groups, 1):
+        # Colour code by similarity band
+        if avg_sim >= 0.90:
+            sim_color = "#22C55E"
+            band = "High"
+        elif avg_sim >= 0.75:
+            sim_color = "#F59E0B"
+            band = "Medium"
         else:
-            st.warning("No standard numeric classification errors detected (e.g., negative Credit_Limit).")
-            
-    elif current_page == "Data_Entry_Errors":
-        # Row is flagged if ANY string column contains UNKNOWN or INVALID
-        mask = raw_df.select_dtypes(include=['object']).apply(
-            lambda x: x.astype(str).str.contains("UNKNOWN|INVALID", case=False, na=False)
-        ).any(axis=1)
-        st.dataframe(raw_df[mask], use_container_width=True)
-        
-    else:
-        # Fallback for synthetic/mock metrics like 'Lack of Governance'
-        st.info("This is a structural/systemic metric. Displaying a random representative sample of high-risk records.")
-        st.dataframe(raw_df.sample(min(len(raw_df), 10)), use_container_width=True)
-        
-    st.markdown("---")
-    st.markdown('<a href="/?page=main" target="_self">⬅ Return to Main Dashboard</a>', unsafe_allow_html=True)
+            sim_color = "#EF553B"
+            band = "Low"
+
+        st.markdown(
+            f"""
+            <div style="
+                background:rgba(30,41,59,0.6);
+                border:1px solid #334155;
+                border-left:4px solid {sim_color};
+                border-radius:8px;
+                padding:14px 20px;
+                margin-bottom:6px;
+            ">
+                <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+                    <span style="font-weight:700;font-size:1.05em;">Group {gi}</span>
+                    <span style="color:{sim_color};font-weight:600;font-size:0.95em;">
+                        Avg Similarity: {avg_sim:.1%}
+                        &nbsp;·&nbsp; {band} Match
+                        &nbsp;·&nbsp; {len(members)} record(s)
+                    </span>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        group_df = df.iloc[members].copy()
+        group_df.insert(0, "_Group", gi)
+        group_df.insert(1, "_Similarity", f"{avg_sim:.1%}")
+
+        styler = _dark_style(group_df)
+        row_h = max(44 * len(group_df) + 44, 100)
+        st.dataframe(styler, use_container_width=True, height=row_h)
+
+        # ← visual row gap between groups
+        st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+
+
+def render_data_entry_errors(df, indices):
+    """Highlight cells containing UNKNOWN or INVALID."""
+    if not indices:
+        st.info("No records with data entry errors found.")
+        return
+    subset = df.loc[sorted(indices)].copy()
+    pattern = r"(?i)UNKNOWN|INVALID"
+
+    def hl(val):
+        return _highlight_if(
+            val,
+            lambda v: isinstance(v, str) and bool(pd.Series(v).str.contains(pattern, na=False).iloc[0]),
+        )
+
+    styler = _dark_style(subset)
+    # applymap works in all pandas versions that Streamlit supports
+    styler = styler.applymap(hl)
+    st.dataframe(styler, use_container_width=True)
+    st.caption("🔴 Highlighted cells contain **UNKNOWN** or **INVALID** values.")
+
+
+def render_incomplete_records(df, indices):
+    """Highlight null/empty cells."""
+    if not indices:
+        st.info("No incomplete records found.")
+        return
+    subset = df.loc[sorted(indices)].copy()
+
+    def hl(val):
+        return _highlight_if(val, pd.isna)
+
+    styler = _dark_style(subset).applymap(hl)
+    st.dataframe(styler, use_container_width=True)
+    st.caption("🔴 Highlighted cells are **null / empty** values.")
+
+
+def render_incorrect_classification(df, indices):
+    """Highlight negative Credit_Limit cells."""
+    if not indices:
+        st.info("No records with incorrect classification found.")
+        return
+    subset = df.loc[sorted(indices)].copy()
+
+    def hl(val):
+        return _highlight_if(val, lambda v: isinstance(v, (int, float)) and v < 0)
+
+    styler = _dark_style(subset).applymap(hl)
+    st.dataframe(styler, use_container_width=True)
+    st.caption("🔴 Highlighted cells contain **negative Credit_Limit** values.")
+
+
+def render_inconsistent_maintenance(df, indices):
+    """Show records with inconsistent formatting."""
+    if not indices:
+        st.info("No records with inconsistent data maintenance found.")
+        return
+    subset = df.loc[sorted(indices)].copy()
+    st.dataframe(_dark_style(subset), use_container_width=True)
+    st.caption(
+        "These records have **formatting inconsistencies** (e.g., mixed case) "
+        "compared to the dominant pattern in their respective columns."
+    )
+
+
+def render_lack_of_governance(df, indices):
+    """Highlight missing governance-critical fields."""
+    if not indices:
+        st.info("No records flagged for lack of governance.")
+        return
+    subset = df.loc[sorted(indices)].copy()
+
+    def hl(val):
+        return _highlight_if(val, pd.isna)
+
+    styler = _dark_style(subset).applymap(hl)
+    st.dataframe(styler, use_container_width=True)
+    st.caption("🔴 Highlighted cells are **missing governance-critical** values.")
+
+
+# ═══════════════════════════════════════════════
+#  PAGE ENTRY POINT
+# ═══════════════════════════════════════════════
+
+# ── Read ?type= from URL query params ──
+try:
+    # Streamlit >= 1.30
+    discrepancy_type = st.query_params.get("type", "Duplicate_Records")
+    if isinstance(discrepancy_type, (list, tuple)):
+        discrepancy_type = discrepancy_type[0]
+except AttributeError:
+    # Streamlit < 1.30
+    qp = st.experimental_get_query_params()
+    discrepancy_type = qp.get("type", ["Duplicate_Records"])[0]
+
+discrepancy_type = discrepancy_type.replace("_", " ")
+
+# ── Guard: session state must exist ──
+if "raw_df" not in st.session_state or "discrepancy_results" not in st.session_state:
+    st.error("⚠️ No data loaded. Please upload a file from the main dashboard first.")
+    st.markdown('[← Return to Dashboard](/)', unsafe_allow_html=True)
     st.stop()
 
-# --- 4. MAIN DASHBOARD ---
-st.title("📊 SAP MDM Quality Control & Governance Dashboard")
-st.markdown("### Executive Master Data Audit Profile & Severity Tracking")
-st.markdown("Upload your customer master dataset below to run automated system audits and generate an AI-powered data governance summary.")
+raw_df = st.session_state["raw_df"]
+results = st.session_state["discrepancy_results"]
+file_name = st.session_state.get("file_name", "Unknown")
 
-uploaded_file = st.file_uploader("Upload SAP Customer Master Dataset (.csv, .xlsx)", type=["csv", "xlsx"])
+if discrepancy_type not in results:
+    st.error(f"⚠️ Unknown discrepancy category: **{discrepancy_type}**")
+    st.markdown('[← Return to Dashboard](/)', unsafe_allow_html=True)
+    st.stop()
 
-if uploaded_file is not None:
-    try:
-        # Load data matrix safely
-        if uploaded_file.name.endswith('.csv'):
-            raw_df = pd.read_csv(uploaded_file)
-        else:
-            raw_df = pd.read_excel(uploaded_file)
+info = results[discrepancy_type]
+indices = sorted(info["indices"])
+count = info["count"]
+severity = info["severity"]
+sev_color = "#EF553B" if severity == "High" else "#636EFA"
 
-        # Cache data to disk for drill-down tabs
-        raw_df.to_pickle(TEMP_DATA_FILE)
+# ── Page header ──
+st.markdown('[← Return to Dashboard](/)', unsafe_allow_html=True)
+st.title(f"🔍 {discrepancy_type} — Detailed Record View")
+st.markdown(
+    f"**Source:** `{file_name}` &nbsp;│&nbsp; "
+    f"**Flagged Records:** {count} &nbsp;│&nbsp; "
+    f"**Severity:** <span style='color:{sev_color};font-weight:600;'>{severity}</span>",
+    unsafe_allow_html=True,
+)
+st.markdown("---")
 
-        # --- BACKEND AUDIT CRITERIA (ROW-BASED COUNTING) ---
-        total_audited_records = len(raw_df)
-        
-        # 1. Duplicates (Row-level) - Counting exact duplicates for high-level metrics
-        duplicate_count = raw_df.duplicated(keep=False).sum()
-        
-        # 2. Incomplete Records: Number of ROWS containing at least one missing cell
-        missing_values_count = raw_df.isnull().any(axis=1).sum()
-        
-        # 3. Incorrect Classification: Negative financial parameters row count
-        negative_credit_count = (raw_df["Credit_Limit"] < 0).sum() if "Credit_Limit" in raw_df.columns else 0
-            
-        # 4. Data Entry Errors: Number of ROWS with malformed strings
-        malformed_strings_count = raw_df.select_dtypes(include=['object']).apply(
-            lambda x: x.astype(str).str.contains("UNKNOWN|INVALID", case=False, na=False)
-        ).any(axis=1).sum()
+# ── Dispatch to the correct renderer ──
+renderers = {
+    "Duplicate Records":              lambda: render_duplicates(raw_df, indices, count),
+    "Data Entry Errors":              lambda: render_data_entry_errors(raw_df, indices),
+    "Incomplete Records":             lambda: render_incomplete_records(raw_df, indices),
+    "Incorrect Classification":       lambda: render_incorrect_classification(raw_df, indices),
+    "Inconsistent Data Maintenance":  lambda: render_inconsistent_maintenance(raw_df, indices),
+    "Lack of Governance":             lambda: render_lack_of_governance(raw_df, indices),
+}
 
-        data = {
-            "DISCREPANCY_CATEGORY": [
-                "Duplicate Records", "Data Entry Errors", "Incomplete Records",
-                "Incorrect Classification", "Inconsistent Data Maintenance", "Lack of Governance"
-            ],
-            "COUNT": [
-                duplicate_count, 
-                malformed_strings_count, 
-                missing_values_count, 
-                negative_credit_count,
-                int(total_audited_records * 0.05) if total_audited_records > 0 else 0,
-                int(total_audited_records * 0.08) if total_audited_records > 0 else 0
-            ],
-            "SEVERITY": ["Medium", "High", "High", "High", "Medium", "High"]
-        }
-        
-        df = pd.DataFrame(data)
-        
-        total_incidents = df["COUNT"].sum()
-        if total_incidents == 0:
-            df["PERCENTAGE"] = 0.0
-            health_index = 100.0
-            high_severity_count = 0
-        else:
-            df["PERCENTAGE"] = (df["COUNT"] / total_incidents) * 100
-            high_severity_count = df[df["SEVERITY"] == "High"]["COUNT"].sum()
-            health_index = 100.0 - ((high_severity_count / total_incidents) * 100)
-
-        # --- RENDER CHOSEN ENTERPRISE KPI GRID ---
-        st.success(f"✅ Master File Successfully Loaded: {uploaded_file.name} | Processed Rows: {total_audited_records:,}")
-        
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.metric(label="Total Records Audited", value=f"{total_audited_records:,}")
-        with col2:
-            st.metric(label="Overall Data Health Index %", value=f"{health_index:.2f}%", delta=f"{(health_index - 100.0):.2f}% Change")
-        with col3:
-            st.metric(label="Critical Risks Flagged (High Severity)", value=f"{high_severity_count}")
-
-        st.markdown("---")
-
-        # --- ADVANCED DUAL CHART DISPLAY AREA ---
-        chart_col1, chart_col2 = st.columns([2, 1])
-
-        with chart_col1:
-            st.subheader("Chart A: Discrepancy Frequency Distribution")
-            fig_bar = px.bar(
-                df.sort_values(by="COUNT", ascending=True),
-                x="COUNT",
-                y="DISCREPANCY_CATEGORY",
-                orientation='h',
-                text="COUNT",
-                color="SEVERITY",
-                color_discrete_map={"High": "#EF553B", "Medium": "#636EFA"},
-                labels={"COUNT": "Incident Count", "DISCREPANCY_CATEGORY": "Category"},
-            )
-            fig_bar.update_layout(height=400, margin=dict(l=20, r=20, t=20, b=20), paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font_color='#E2E8F0')
-            st.plotly_chart(fig_bar, use_container_width=True, config={'displayModeBar': False})
-
-        with chart_col2:
-            st.subheader("Chart B: Severity Distribution")
-            severity_df = df.groupby("SEVERITY")["COUNT"].sum().reset_index()
-            fig_pie = px.pie(
-                severity_df,
-                values="COUNT",
-                names="SEVERITY",
-                hole=0.4,
-                color="SEVERITY",
-                color_discrete_map={"High": "#EF553B", "Medium": "#636EFA"}
-            )
-            fig_pie.update_layout(height=400, margin=dict(l=20, r=20, t=20, b=20), paper_bgcolor='rgba(0,0,0,0)', font_color='#E2E8F0')
-            st.plotly_chart(fig_pie, use_container_width=True, config={'displayModeBar': False})
-
-        st.markdown("---")
-
-        # --- STRUCTURAL DATA VIEW COMPONENT (HTML TABLE WITH LINKS) ---
-        st.subheader("📋 Consolidated Failure Master Data Reference Table")
-        st.caption("Click on any Discrepancy Category below to open a detailed root-cause analysis tab.")
-        
-        # Construct custom HTML table to support target="_blank" hyperlinks
-        html_table = '<table class="custom-table"><thead><tr><th>DISCREPANCY CATEGORY</th><th>COUNT (ROWS)</th><th>SEVERITY</th><th>PERCENTAGE</th></tr></thead><tbody>'
-        for _, row in df.iterrows():
-            cat = row['DISCREPANCY_CATEGORY']
-            link_param = cat.replace(' ', '_')
-            html_table += f"""
-                <tr>
-                    <td><a href="/?page={link_param}" target="_blank">{cat}</a></td>
-                    <td>{row['COUNT']}</td>
-                    <td>{row['SEVERITY']}</td>
-                    <td>{row['PERCENTAGE']:.2f}%</td>
-                </tr>
-            """
-        html_table += '</tbody></table>'
-        
-        st.markdown(html_table, unsafe_allow_html=True)
-
-        st.markdown("---")
-
-        # --- SECURE OPENROUTER NETWORK CALL INTEGRATION ---
-        st.subheader("🤖 AI Executive Audit Insights & Remediation Roadmap")
-        
-        try:
-            api_key = st.secrets["OPENROUTER_API_KEY"]
-            summary_stats_payload = df.to_json(orient='records')
-            
-            prompt = f"""
-            You are an expert Enterprise SAP Master Data Governance Specialist. 
-            I have just finalized a deep quality assurance validation run on an SAC customer data export.
-            
-            Data Audit Performance Profile:
-            - File Name: {uploaded_file.name}
-            - Base System Accounts Inspected: {total_audited_records}
-            - Data Health Index calculated: {health_index:.2f}%
-            - Summary Profile Dataset metrics: {summary_stats_payload}
-            
-            Based on these metrics, generate a comprehensive strategic Executive Report. You must include:
-            1. A formal data validation audit performance summary paragraph.
-            2. A rigorous corporate risk table matching the classification profile details.
-            3. 3 core action points explicitly identifying mitigation strategies for our master data engineering team.
-            Maintain an enterprise-ready tone. Do not include markdown code wrapping blocks.
-            """
-
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
-            payload = {
-                "model": "nvidia/nemotron-3-ultra-550b-a55b:free",
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.1
-            }
-
-            with st.spinner("NVIDIA Nemotron 3 Ultra processing corporate audit analytics matrix..."):
-                response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
-                
-                if response.status_code == 200:
-                    ai_narrative = response.json()['choices'][0]['message']['content']
-                    st.markdown(ai_narrative)
-                else:
-                    st.error(f"Cloud Network Error {response.status_code}: API Gateway connection failed.")
-                    
-        except KeyError:
-            st.warning("⚠️ Configuration Alert: Ensure your OpenRouter developer key flag is configured inside `.streamlit/secrets.toml`.")
-
-    except Exception as e:
-        st.error(f"❌ Error compiling target database structures: {e}")
-
+renderer = renderers.get(discrepancy_type)
+if renderer:
+    renderer()
 else:
-    st.info("👋 Welcome to the Auditor Console. Please upload a CSV or Excel Customer Master export to launch the live analytics pipeline.")
+    st.error(f"No detail view implemented for: {discrepancy_type}")
