@@ -118,22 +118,46 @@ if uploaded_file is not None:
 
         st.markdown("---")
 
-        # --- 7. CLICKABLE STRUCTURAL DATA VIEW ---
-        # Each category name is a hyperlink that opens the detail page in a new tab.
+               # --- 7. CLICKABLE STRUCTURAL DATA VIEW ---
         st.subheader("📋 Consolidated Failure Master Data Reference Table")
-        st.caption("Click any discrepancy category below to view the specific flagged records in a new tab.")
+        st.caption("Click any discrepancy category to inspect the flagged records.")
 
-        st.subheader("📋 Consolidated Failure Master Data Reference Table")
-        st.caption("Click any discrepancy category below to view the specific flagged records in a new tab.")
+        # Build a DataFrame where the category column holds the navigation URL
+        nav_df = df[["COUNT", "SEVERITY", "PERCENTAGE"]].copy()
+        nav_df.insert(0, "DISCREPANCY_CATEGORY", df["DISCREPANCY_CATEGORY"].apply(
+            lambda x: f"/Discrepancy_Details?type={x.replace(' ', '_')}"
+        ))
 
-        link_df = df.copy()
-        link_df["DISCREPANCY_CATEGORY"] = link_df["DISCREPANCY_CATEGORY"].apply(
-            lambda x: f"[{x} ↗](/Discrepancy_Details?type={x.replace(' ', '_')})"
+        # Dark-theme Styler
+        styled = nav_df.style.format({"PERCENTAGE": "{:.4f}"}).set_properties(**{
+            "color": "#E2E8F0",
+            "background-color": "rgba(30, 41, 59, 0.6)",
+        }).set_table_styles([
+            {"selector": "th", "props": [
+                ("color", "#E2E8F0"),
+                ("background-color", "rgba(30, 41, 59, 0.8)"),
+            ]},
+            {"selector": "td, th", "props": [
+                ("border-color", "#334155"),
+                ("padding", "10px 14px"),
+            ]},
+        ])
+
+        st.dataframe(
+            styled,
+            column_config={
+                "DISCREPANCY_CATEGORY": st.column_config.LinkColumn(
+                    "DISCREPANCY_CATEGORY",
+                    display_text=lambda url: url.split("type=")[-1].replace("_", " ") + " ↗",
+                ),
+                "COUNT": st.column_config.NumberColumn("COUNT", format="%d"),
+                "SEVERITY": st.column_config.TextColumn("SEVERITY"),
+                "PERCENTAGE": st.column_config.NumberColumn("PERCENTAGE", format="%.4f"),
+            },
+            hide_index=True,
+            use_container_width=True,
+            height=340,
         )
-
-        st.markdown(link_df.to_markdown(index=False), unsafe_allow_html=True)
-
-        st.markdown("---")
 
         # --- 8. SECURE OPENROUTER NETWORK CALL INTEGRATION ---
         st.subheader("🤖 AI Executive Audit Insights & Remediation Roadmap")
