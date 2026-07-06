@@ -123,47 +123,15 @@ if uploaded_file is not None:
         st.subheader("📋 Consolidated Failure Master Data Reference Table")
         st.caption("Click any discrepancy category below to view the specific flagged records in a new tab.")
 
-        table_html = """
-        <div style="overflow-x:auto;">
-        <table style="width:100%; border-collapse:collapse; color:#E2E8F0; font-size:0.95em;">
-        <thead>
-        <tr style="border-bottom:2px solid #334155;">
-            <th style="padding:14px 16px; text-align:left; color:#94A3B8; font-weight:600;">Discrepancy Category</th>
-            <th style="padding:14px 16px; text-align:right; color:#94A3B8; font-weight:600;">Count</th>
-            <th style="padding:14px 16px; text-align:center; color:#94A3B8; font-weight:600;">Severity</th>
-            <th style="padding:14px 16px; text-align:right; color:#94A3B8; font-weight:600;">Percentage</th>
-        </tr>
-        </thead>
-        <tbody>
-        """
-        for _, row in df.iterrows():
-            cat = row["DISCREPANCY_CATEGORY"]
-            url_cat = cat.replace(" ", "_")
-            sev = row["SEVERITY"]
-            sev_color = "#EF553B" if sev == "High" else "#636EFA"
-            pct = row["PERCENTAGE"]
-            cnt = row["COUNT"]
-            table_html += f"""
-            <tr style="border-bottom:1px solid #1E293B; transition:background 0.2s;"
-                onmouseover="this.style.background='rgba(30,41,59,0.8)'"
-                onmouseout="this.style.background='transparent'">
-                <td style="padding:14px 16px;">
-                    <a href="/Discrepancy_Details?type={url_cat}" target="_blank"
-                       style="color:#60A5FA; text-decoration:none; font-weight:600; border-bottom:1px dashed rgba(96,165,250,0.35);">
-                        {cat} <span style="font-size:0.75em; opacity:0.55;">↗</span>
-                    </a>
-                </td>
-                <td style="padding:14px 16px; text-align:right; font-weight:600; font-variant-numeric:tabular-nums;">{cnt:,}</td>
-                <td style="padding:14px 16px; text-align:center;">
-                    <span style="background:{sev_color}1A; color:{sev_color}; padding:5px 14px; border-radius:20px; font-size:0.85em; font-weight:600; border:1px solid {sev_color}33;">
-                        {sev}
-                    </span>
-                </td>
-                <td style="padding:14px 16px; text-align:right; font-variant-numeric:tabular-nums;">{pct:.2f}%</td>
-            </tr>
-            """
-        table_html += "</tbody></table></div>"
-        st.markdown(table_html, unsafe_allow_html=True)
+        st.subheader("📋 Consolidated Failure Master Data Reference Table")
+        st.caption("Click any discrepancy category below to view the specific flagged records in a new tab.")
+
+        link_df = df.copy()
+        link_df["DISCREPANCY_CATEGORY"] = link_df["DISCREPANCY_CATEGORY"].apply(
+            lambda x: f"[{x} ↗](/Discrepancy_Details?type={x.replace(' ', '_')})"
+        )
+
+        st.markdown(link_df.to_markdown(index=False), unsafe_allow_html=True)
 
         st.markdown("---")
 
