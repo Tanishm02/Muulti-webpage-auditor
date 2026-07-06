@@ -122,26 +122,36 @@ if uploaded_file is not None:
         st.subheader("📋 Consolidated Failure Master Data Reference Table")
         st.caption("Click any discrepancy category to inspect the flagged records.")
 
-        nav_df = df[["COUNT", "SEVERITY", "PERCENTAGE"]].copy()
-        nav_df.insert(0, "DISCREPANCY_CATEGORY", df["DISCREPANCY_CATEGORY"].apply(
-            lambda x: f"/Discrepancy_Details?type={x.replace(' ', '_')}"
-        ))
+        # Table Header
+        h1, h2, h3, h4 = st.columns([4.5, 1.2, 1.2, 1.2])
+        h1.markdown("**DISCREPANCY_CATEGORY**")
+        h2.markdown("**COUNT**")
+        h3.markdown("**SEVERITY**")
+        h4.markdown("**PERCENTAGE**")
+        
+        st.markdown("<div style='height:1px; background-color:#334155; margin: 4px 0 12px 0;'></div>", unsafe_allow_html=True)
 
-        st.dataframe(
-            nav_df,
-            column_config={
-                "DISCREPANCY_CATEGORY": st.column_config.LinkColumn(
-                    "DISCREPANCY_CATEGORY",
-                    display_text=lambda url: url.split("type=")[-1].replace("_", " ") + " ↗",
-                ),
-                "COUNT": st.column_config.NumberColumn("COUNT", format="%d"),
-                "SEVERITY": st.column_config.TextColumn("SEVERITY"),
-                "PERCENTAGE": st.column_config.NumberColumn("PERCENTAGE", format="%.2f%%"),
-            },
-            hide_index=True,
-            use_container_width=True,
-            height=340,
-        )
+        # Table Body
+        for _, row in df.iterrows():
+            c1, c2, c3, c4 = st.columns([4.5, 1.2, 1.2, 1.2])
+            
+            with c1:
+                if st.button(
+                    f"🔍 {row['DISCREPANCY_CATEGORY']}  ↗", 
+                    key=f"nav_btn_{row['DISCREPANCY_CATEGORY'].replace(' ', '_')}",
+                    use_container_width=True
+                ):
+                    st.query_params["type"] = row["DISCREPANCY_CATEGORY"].replace(" ", "_")
+                    st.switch_page("pages/Discrepancy_Details.py")
+                    
+            c2.write(f"{int(row['COUNT'])}")
+            
+            sev_color = "#EF553B" if row["SEVERITY"] == "High" else "#636EFA"
+            c3.markdown(f"<span style='color:{sev_color}; font-weight:600;'>{row['SEVERITY']}</span>", unsafe_allow_html=True)
+            
+            c4.write(f"{row['PERCENTAGE']:.2f}%")
+
+        st.markdown("---")
 
         # --- 8. SECURE OPENROUTER NETWORK CALL INTEGRATION ---
         st.subheader("🤖 AI Executive Audit Insights & Remediation Roadmap")
