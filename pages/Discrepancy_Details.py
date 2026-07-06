@@ -199,8 +199,8 @@ def render_data_entry_errors(df, indices):
         )
 
     styler = _dark_style(subset)
-    # applymap works in all pandas versions that Streamlit supports
-    styler = styler.applymap(hl)
+    # FIXED: Use .map() instead of deprecated .applymap()
+    styler = styler.map(hl)
     st.dataframe(styler, use_container_width=True)
     st.caption("🔴 Highlighted cells contain **UNKNOWN** or **INVALID** values.")
 
@@ -215,7 +215,8 @@ def render_incomplete_records(df, indices):
     def hl(val):
         return _highlight_if(val, pd.isna)
 
-    styler = _dark_style(subset).applymap(hl)
+    # FIXED: Use .map() instead of deprecated .applymap()
+    styler = _dark_style(subset).map(hl)
     st.dataframe(styler, use_container_width=True)
     st.caption("🔴 Highlighted cells are **null / empty** values.")
 
@@ -230,7 +231,8 @@ def render_incorrect_classification(df, indices):
     def hl(val):
         return _highlight_if(val, lambda v: isinstance(v, (int, float)) and v < 0)
 
-    styler = _dark_style(subset).applymap(hl)
+    # FIXED: Use .map() instead of deprecated .applymap()
+    styler = _dark_style(subset).map(hl)
     st.dataframe(styler, use_container_width=True)
     st.caption("🔴 Highlighted cells contain **negative Credit_Limit** values.")
 
@@ -258,7 +260,8 @@ def render_lack_of_governance(df, indices):
     def hl(val):
         return _highlight_if(val, pd.isna)
 
-    styler = _dark_style(subset).applymap(hl)
+    # FIXED: Use .map() instead of deprecated .applymap()
+    styler = _dark_style(subset).map(hl)
     st.dataframe(styler, use_container_width=True)
     st.caption("🔴 Highlighted cells are **missing governance-critical** values.")
 
@@ -268,16 +271,27 @@ def render_lack_of_governance(df, indices):
 # ═══════════════════════════════════════════════
 
 # ── Read ?type= from URL query params ──
-try:
-    # Streamlit >= 1.30
-    discrepancy_type = st.query_params.get("type", "Duplicate_Records")
-    if isinstance(discrepancy_type, (list, tuple)):
-        discrepancy_type = discrepancy_type[0]
-except AttributeError:
-    # Streamlit < 1.30
-    qp = st.experimental_get_query_params()
-    discrepancy_type = qp.get("type", ["Duplicate_Records"])[0]
+# FIXED: Properly handle st.query_params for Streamlit 1.30+
+discrepancy_type = "Duplicate_Records"  # Default fallback
 
+try:
+    # Streamlit >= 1.30 - st.query_params behaves like a dict but with special handling
+    if "type" in st.query_params:
+        raw_param = st.query_params["type"]
+        # QueryParams returns the value directly or as a list if multiple values
+        if isinstance(raw_param, (list, tuple)):
+            discrepancy_type = raw_param[0] if raw_param else "Duplicate_Records"
+        else:
+            discrepancy_type = raw_param
+except (AttributeError, TypeError, KeyError):
+    # Streamlit < 1.30 fallback
+    try:
+        qp = st.experimental_get_query_params()
+        discrepancy_type = qp.get("type", ["Duplicate_Records"])[0]
+    except AttributeError:
+        pass  # Keep default
+
+# Convert underscores back to spaces
 discrepancy_type = discrepancy_type.replace("_", " ")
 
 # ── Guard: session state must exist ──
