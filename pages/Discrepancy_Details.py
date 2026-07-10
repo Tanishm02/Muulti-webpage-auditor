@@ -1,5 +1,6 @@
 """
 Discrepancy Detail Page - With Cell Highlighting & Duplicate Grouping
+Using HTML tables for reliable rendering
 """
 
 import streamlit as st
@@ -22,68 +23,127 @@ st.markdown("""
     .block-container {padding-top: 2rem !important; padding-bottom: 2rem !important;}
     body { background-color: #0F172A !important; color: #e4e2e4 !important; font-family: 'Inter', sans-serif !important; }
     [data-testid="stSidebarNav"] [href*="Discrepancy_Details"] { display: none; }
+    
+    /* Scrollable table container */
+    .table-container {
+        max-height: 500px;
+        overflow-y: auto;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        margin-bottom: 8px;
+    }
+    .table-container table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+        font-family: 'Inter', sans-serif;
+    }
+    .table-container thead {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+    }
+    .table-container th {
+        background-color: #1E293B;
+        color: #94A3B8;
+        padding: 12px;
+        border: 1px solid #334155;
+        text-align: left;
+        font-weight: 600;
+    }
+    .table-container td {
+        background-color: #0F172A;
+        color: #E2E8F0;
+        padding: 10px 12px;
+        border: 1px solid #1E293B;
+    }
+    .table-container tr:hover td {
+        background-color: rgba(30,41,59,0.6) !important;
+    }
+    /* Highlighted cell */
+    .cell-hl {
+        background-color: rgba(239,85,59,0.3) !important;
+        color: #FCA5A5 !important;
+        font-weight: 600;
+    }
+    /* Group header */
+    .group-header {
+        background: rgba(30,41,59,0.6);
+        border: 1px solid #334155;
+        border-left: 4px solid #636EFA;
+        border-radius: 6px;
+        padding: 10px 16px;
+        margin: 8px 0;
+    }
+    .group-gap {
+        height: 20px;
+    }
     </style>
 """, unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════
-#  HELPER: Base table styling
+#  HELPER: Render HTML Table
 # ═══════════════════════════════════════════════
 
-def get_base_styles():
-    """Return base table styles for dark theme"""
-    return [
-        {"selector": "th", "props": [
-            "background-color: #1E293B",
-            "color: #94A3B8",
-            "font-weight: 600",
-            "border: 1px solid #334155",
-            "text-align: left",
-        ]},
-        {"selector": "td", "props": [
-            "background-color: #0F172A",
-            "color: #E2E8F0",
-            "border: 1px solid #1E293B",
-        ]},
-        {"selector": "tr:hover td", "props": [
-            "background-color: rgba(30,41,59,0.6) !important",
-        ]},
-        {"selector": ".row_heading", "props": [
-            "display: none",
-        ]},
-    ]
-
-
-def apply_base_style(styler):
-    """Apply base dark theme to styler"""
-    return styler.set_table_styles(get_base_styles()).hide(axis="index")
+def render_html_table(df, highlight_fn=None):
+    """
+    Render a dataframe as an HTML table with optional cell highlighting.
+    highlight_fn: function(val) -> bool (True = highlight cell)
+    """
+    html = '<div class="table-container"><table>'
+    
+    # Header row
+    html += '<thead><tr>'
+    for col in df.columns:
+        html += f'<th>{col}</th>'
+    html += '</tr></thead>'
+    
+    # Data rows
+    html += '<tbody>'
+    for _, row in df.iterrows():
+        html += '<tr>'
+        for col in df.columns:
+            val = row[col]
+            # Format display value
+            if pd.isna(val):
+                display_val = '<em style="color:#64748B;">NULL</em>'
+            else:
+                display_val = str(val)
+            
+            # Check if cell should be highlighted
+            cell_class = ' class="cell-hl"' if (highlight_fn and highlight_fn(val)) else ''
+            html += f'<td{cell_class}>{display_val}</td>'
+        html += '</tr>'
+    html += '</tbody></table></div>'
+    
+    st.markdown(html, unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════
-#  HIGHLIGHT FUNCTIONS (return CSS or empty string)
+#  HIGHLIGHT FUNCTIONS (return True/False)
 # ═══════════════════════════════════════════════
 
-HL_STYLE = "background-color: rgba(239,85,59,0.3); color: #FCA5A5; font-weight: 600;"
-
-def hl_unknown_invalid(val):
-    """Highlight UNKNOWN or INVALID values"""
+def is_unknown_invalid(val):
+    """Check if value is UNKNOWN or INVALID"""
     if isinstance(val, str):
         val_upper = val.upper().strip()
-        if "UNKNOWN" in val_upper or "INVALID" in val_upper:
-            return HL_STYLE
-    return ""
+        return "UNKNOWN" in val_upper or "INVALID" in val_upper
+    return False
 
-def hl_null_empty(val):
-    """Highlight null or empty values"""
-    if pd.isna(val) or (isinstance(val, str) and val.strip() == ""):
-        return HL_STYLE
-    return ""
+def is_null_empty(val):
+    """Check if value is null or empty"""
+    if pd.isna(val):
+        return True
+    if isinstance(val, str) and val.strip() == "":
+        return True
+    return False
 
-def hl_negative(val):
-    """Highlight negative numeric values"""
-    if isinstance(val, (int, float)) and not pd.isna(val) and val < 0:
-        return HL_STYLE
-    return ""
+def is_negative(val):
+    """Check if value is negative"""
+    if isinstance(val, (int, float)) and not pd.isna(val):
+        return val < 0
+    return False
 
 
 # ═══════════════════════════════════════════════
@@ -105,7 +165,6 @@ def render_duplicates(df, indices, count):
         return
     
     # Group by all column values to find duplicate groups
-    # Convert to tuple for grouping (handles NaN properly)
     def make_key(row):
         return tuple(str(v) if not pd.isna(v) else "__NaN__" for v in row)
     
@@ -123,34 +182,21 @@ def render_duplicates(df, indices, count):
         total_shown += len(group)
         
         # Prepare display dataframe
-        display_df = group.drop(columns=["_group_key"]).copy()
+        display_df = group.drop(columns=["_group_key"]).copy().reset_index(drop=True)
         display_df.insert(0, "Group", group_num)
         display_df.insert(1, "Copies", len(group))
         
         # Display group header
         st.markdown(
-            f"""
-            <div style="
-                background: rgba(30,41,59,0.6);
-                border: 1px solid #334155;
-                border-left: 4px solid #636EFA;
-                border-radius: 6px;
-                padding: 10px 16px;
-                margin-bottom: 8px;
-            ">
-                <strong>Group {group_num}</strong> — {len(group)} identical record(s)
-            </div>
-            """,
+            f'<div class="group-header"><strong>Group {group_num}</strong> — {len(group)} identical record(s)</div>',
             unsafe_allow_html=True
         )
         
-        # Style and display
-        styler = apply_base_style(display_df.style)
-        row_height = min(250, 40 * len(display_df) + 50)
-        st.dataframe(styler, use_container_width=True, height=row_height)
+        # Render table (no highlighting needed for duplicates - all rows are identical)
+        render_html_table(display_df)
         
         # Visual gap between groups
-        st.markdown("<div style='height:20px;'></div>", unsafe_allow_html=True)
+        st.markdown('<div class="group-gap"></div>', unsafe_allow_html=True)
     
     if group_num == 0:
         st.info("No duplicate groups found.")
@@ -168,13 +214,10 @@ def render_data_entry_errors(df, indices):
         st.info("✅ No records with data entry errors.")
         return
     
-    flagged_df = df.loc[sorted(indices)].copy()
+    flagged_df = df.loc[sorted(indices)].copy().reset_index(drop=True)
     flagged_df.insert(0, "#", range(1, len(flagged_df) + 1))
     
-    styler = apply_base_style(flagged_df.style)
-    styler = styler.map(hl_unknown_invalid)
-    
-    st.dataframe(styler, use_container_width=True)
+    render_html_table(flagged_df, highlight_fn=is_unknown_invalid)
     st.caption("🔴 Highlighted cells contain **UNKNOWN** or **INVALID** values.")
 
 
@@ -188,13 +231,10 @@ def render_incomplete_records(df, indices):
         st.info("✅ No incomplete records.")
         return
     
-    flagged_df = df.loc[sorted(indices)].copy()
+    flagged_df = df.loc[sorted(indices)].copy().reset_index(drop=True)
     flagged_df.insert(0, "#", range(1, len(flagged_df) + 1))
     
-    styler = apply_base_style(flagged_df.style)
-    styler = styler.map(hl_null_empty)
-    
-    st.dataframe(styler, use_container_width=True)
+    render_html_table(flagged_df, highlight_fn=is_null_empty)
     st.caption("🔴 Highlighted cells are **null / empty** values.")
 
 
@@ -208,16 +248,40 @@ def render_incorrect_classification(df, indices):
         st.info("✅ No records with incorrect classification.")
         return
     
-    flagged_df = df.loc[sorted(indices)].copy()
+    flagged_df = df.loc[sorted(indices)].copy().reset_index(drop=True)
     flagged_df.insert(0, "#", range(1, len(flagged_df) + 1))
     
-    styler = apply_base_style(flagged_df.style)
+    # Create column-specific highlight function
+    def highlight_credit_limit(val, col_name="Credit_Limit"):
+        # This will be called for all cells, but we only want to highlight Credit_Limit
+        return False  # We'll handle this differently below
     
-    # Only highlight Credit_Limit column if it exists
-    if "Credit_Limit" in flagged_df.columns:
-        styler = styler.map(hl_negative, subset=["Credit_Limit"])
+    # For this case, we need column-specific highlighting
+    # So we'll build the HTML manually
+    html = '<div class="table-container"><table>'
+    html += '<thead><tr>'
+    for col in flagged_df.columns:
+        html += f'<th>{col}</th>'
+    html += '</tr></thead><tbody>'
     
-    st.dataframe(styler, use_container_width=True)
+    for _, row in flagged_df.iterrows():
+        html += '<tr>'
+        for col in flagged_df.columns:
+            val = row[col]
+            if pd.isna(val):
+                display_val = '<em style="color:#64748B;">NULL</em>'
+            else:
+                display_val = str(val)
+            
+            # Only highlight if it's Credit_Limit and negative
+            if col == "Credit_Limit" and is_negative(val):
+                html += f'<td class="cell-hl">{display_val}</td>'
+            else:
+                html += f'<td>{display_val}</td>'
+        html += '</tr>'
+    html += '</tbody></table></div>'
+    
+    st.markdown(html, unsafe_allow_html=True)
     st.caption("🔴 Highlighted cells have **negative Credit_Limit** values.")
 
 
@@ -231,7 +295,7 @@ def render_inconsistent_maintenance(df, indices):
         st.info("✅ No records with inconsistent formatting.")
         return
     
-    flagged_df = df.loc[sorted(indices)].copy()
+    flagged_df = df.loc[sorted(indices)].copy().reset_index(drop=True)
     flagged_df.insert(0, "#", range(1, len(flagged_df) + 1))
     
     # Determine dominant case pattern for each string column
@@ -250,27 +314,39 @@ def render_inconsistent_maintenance(df, indices):
         else:
             dominant_case[col] = None
     
-    # Create highlight functions for each column
-    styler = apply_base_style(flagged_df.style)
+    # Build HTML with column-specific highlighting
+    html = '<div class="table-container"><table>'
+    html += '<thead><tr>'
+    for col in flagged_df.columns:
+        html += f'<th>{col}</th>'
+    html += '</tr></thead><tbody>'
     
-    for col, pattern in dominant_case.items():
-        if pattern is None or col not in flagged_df.columns:
-            continue
-        
-        if pattern == "upper":
-            def hl_wrong_case(val, p=pattern):
+    for _, row in flagged_df.iterrows():
+        html += '<tr>'
+        for col in flagged_df.columns:
+            val = row[col]
+            if pd.isna(val):
+                display_val = '<em style="color:#64748B;">NULL</em>'
+            else:
+                display_val = str(val)
+            
+            # Check if this cell should be highlighted
+            should_highlight = False
+            if col in dominant_case and dominant_case[col] is not None:
                 if isinstance(val, str) and val.strip() and val.strip().isalpha():
-                    return HL_STYLE if not val.strip().isupper() else ""
-                return ""
-        else:  # lower
-            def hl_wrong_case(val, p=pattern):
-                if isinstance(val, str) and val.strip() and val.strip().isalpha():
-                    return HL_STYLE if not val.strip().islower() else ""
-                return ""
-        
-        styler = styler.map(hl_wrong_case, subset=[col])
+                    if dominant_case[col] == "upper" and not val.strip().isupper():
+                        should_highlight = True
+                    elif dominant_case[col] == "lower" and not val.strip().islower():
+                        should_highlight = True
+            
+            if should_highlight:
+                html += f'<td class="cell-hl">{display_val}</td>'
+            else:
+                html += f'<td>{display_val}</td>'
+        html += '</tr>'
+    html += '</tbody></table></div>'
     
-    st.dataframe(styler, use_container_width=True)
+    st.markdown(html, unsafe_allow_html=True)
     st.caption("🔴 Highlighted cells have **inconsistent casing** compared to the dominant format.")
 
 
@@ -284,7 +360,7 @@ def render_lack_of_governance(df, indices):
         st.info("✅ No records flagged for lack of governance.")
         return
     
-    flagged_df = df.loc[sorted(indices)].copy()
+    flagged_df = df.loc[sorted(indices)].copy().reset_index(drop=True)
     flagged_df.insert(0, "#", range(1, len(flagged_df) + 1))
     
     # Identify governance-critical columns
@@ -292,21 +368,38 @@ def render_lack_of_governance(df, indices):
         "email", "phone", "tax", "vat", "registration",
         "region", "country", "postal", "zip", "city", "address"
     ]
-    gov_cols = [c for c in df.columns if any(kw in c.lower() for kw in gov_keywords)]
+    gov_cols = set(c for c in df.columns if any(kw in c.lower() for kw in gov_keywords))
     
     # Fallback to first 3 columns if no governance columns found
     if not gov_cols:
-        gov_cols = list(df.columns[:3])
+        gov_cols = set(df.columns[:3])
     
-    styler = apply_base_style(flagged_df.style)
+    # Build HTML with column-specific highlighting
+    html = '<div class="table-container"><table>'
+    html += '<thead><tr>'
+    for col in flagged_df.columns:
+        html += f'<th>{col}</th>'
+    html += '</tr></thead><tbody>'
     
-    # Only highlight governance columns
-    for col in gov_cols:
-        if col in flagged_df.columns:
-            styler = styler.map(hl_null_empty, subset=[col])
+    for _, row in flagged_df.iterrows():
+        html += '<tr>'
+        for col in flagged_df.columns:
+            val = row[col]
+            if pd.isna(val):
+                display_val = '<em style="color:#64748B;">NULL</em>'
+            else:
+                display_val = str(val)
+            
+            # Only highlight if it's a governance column and is null
+            if col in gov_cols and is_null_empty(val):
+                html += f'<td class="cell-hl">{display_val}</td>'
+            else:
+                html += f'<td>{display_val}</td>'
+        html += '</tr>'
+    html += '</tbody></table></div>'
     
-    st.dataframe(styler, use_container_width=True)
-    st.caption(f"🔴 Highlighted cells are **missing governance-critical** values (columns: {', '.join(gov_cols)}).")
+    st.markdown(html, unsafe_allow_html=True)
+    st.caption(f"🔴 Highlighted cells are **missing governance-critical** values (columns: {', '.join(sorted(gov_cols))}).")
 
 
 # ═══════════════════════════════════════════════
